@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#02060d">
 <title>JARVIS</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;800&family=Rajdhani:wght@500;600&display=swap" rel="stylesheet">
 <style>
 :root{--c:#3df2ff;--bg:#02060d;--dim:rgba(61,242,255,.55);--a:#ffb347}
@@ -43,6 +45,8 @@ body[data-state=error] .core{background:radial-gradient(circle,#fff 0,#ffe0b0 22
 .bar input{flex:1;min-width:0;background:rgba(61,242,255,.07);border:1px solid var(--dim);color:#fff;padding:10px 12px;font:inherit;border-radius:6px}
 .bar button{background:transparent;border:1px solid var(--c);color:var(--c);padding:10px 12px;font:inherit;font-weight:600;border-radius:6px}
 .bar button[aria-pressed=true]{background:var(--c);color:#02060d}
+body[data-state=wake] .r1{animation-duration:22s}
+body[data-state=wake] .core{opacity:.65}
 :focus-visible{outline:2px solid #fff;outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
@@ -63,12 +67,13 @@ body[data-state=error] .core{background:radial-gradient(circle,#fff 0,#ffe0b0 22
   <input id="txt" placeholder="या यहाँ लिखकर पूछिए…" enterkeyhint="send">
   <button id="send">भेजो</button>
   <button id="auto" aria-pressed="false" title="जवाब के बाद अपने आप सुनना शुरू करे">लगातार</button>
+  <button id="wake" aria-pressed="false" title="हाय जार्विस बोलकर जगाइए">वेक</button>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null, voice = null, auto = false;
+let rec = null, voice = null, auto = false, wrec = null, wakeOn = false, lock = null;
 
 function setState(s, t) {
   document.body.dataset.state = s;
@@ -126,6 +131,26 @@ function reply(raw) {
   if (has(t, 'बंद करो', 'चुप', 'स्टॉप', 'stop'))
     return { say: 'ठीक है, मैं चुप हो जाता हूँ।' };
 
+  const cm = t.match(/(\d+(?:\.\d+)?)\s*(जोड़|जोड|प्लस|plus|\+|घटा|घटाओ|माइनस|minus|-|गुणा|इनटू|×|x|भाग|डिवाइड|\/)\s*(\d+(?:\.\d+)?)/);
+  if (cm) {
+    const a = +cm[1], b = +cm[3], o = cm[2];
+    let v;
+    if (/जोड|प्लस|plus|\+/.test(o)) v = a + b;
+    else if (/घटा|माइनस|minus|-/.test(o)) v = a - b;
+    else if (/गुणा|इनटू|×|x/.test(o)) v = a * b;
+    else { if (!b) return { say: 'शून्य से भाग नहीं हो सकता।' }; v = a / b; }
+    return { say: 'जवाब ' + Math.round(v * 1000) / 1000 + ' है।' };
+  }
+  const cn = t.replace(/[\s-]/g, '').match(/(?:कॉल|call|फोन|फ़ोन)[^\d]*(\d{10})/);
+  if (cn) return { say: 'नंबर ' + cn[1].split('').join(' ') + ' पर कॉल करने के लिए बटन दबाइए।', link: { href: 'tel:' + cn[1], label: 'कॉल करो' } };
+  if (has(t, 'रास्ता', 'नक्शा', 'मैप', 'map', 'navigate')) {
+    const q = t.replace(/का रास्ता|रास्ता|नक्शा|मैप्स|मैप|दिखाओ|बताओ|map|navigate/g, '').trim();
+    return { say: 'नक्शा खोलने के लिए नीचे का बटन दबाइए।', link: { href: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q || t), label: 'नक्शा खोलो' } };
+  }
+  if (has(t, 'गाना', 'गाने', 'song')) {
+    const q = t.replace(/यूट्यूब पर|यूट्यूब|चलाओ|सुनाओ|बजाओ|गाना|गाने|song/g, '').trim();
+    return { say: 'गाना सुनने के लिए नीचे का बटन दबाइए।', link: { href: 'https://www.youtube.com/results?search_query=' + encodeURIComponent((q + ' गाना').trim()), label: 'गाना चलाओ' } };
+  }
   if (has(t, 'सर्च', 'खोज', 'गूगल', 'search', 'google')) {
     const q = t.replace(/गूगल पर|गूगल|सर्च करो|सर्च|खोजो|खोज|search for|search|google/g, '').trim();
     if (q) return { say: 'ठीक है सर, ' + q + ' खोजने के लिए नीचे का बटन दबाइए।', link: { href: 'https://www.google.com/search?q=' + encodeURIComponent(q), label: 'गूगल पर खोजो' } };
@@ -156,6 +181,7 @@ function reply(raw) {
     const g = h < 12 ? 'सुप्रभात' : h < 17 ? 'नमस्कार' : h < 21 ? 'शुभ संध्या' : 'शुभ रात्रि';
     return { say: g + ' सर। बताइए, मैं आपकी क्या मदद कर सकता हूँ?' };
   }
+  if (!navigator.onLine) return { say: 'माफ़ कीजिए, यह मुझे समझ नहीं आया और इंटरनेट बंद है, इसलिए खोज भी नहीं सकता।' };
   return {
     say: 'माफ़ कीजिए, यह मुझे पूरी तरह समझ नहीं आया। चाहें तो मैं इसे गूगल पर खोज सकता हूँ।',
     link: { href: 'https://www.google.com/search?q=' + encodeURIComponent(raw), label: 'गूगल पर खोजो' }
@@ -169,7 +195,7 @@ function handle(text) {
   setState('thinking', 'सोच रहा हूँ…');
   const r = reply(text);
   addMsg('jarvis', r.say, r.link);
-  speak(r.say, () => { if (auto) startListening(); });
+  speak(r.say, () => { if (auto) startListening(); else if (wakeOn) startWake(); });
 }
 
 /* ---------- कान (सुनना) ---------- */
@@ -179,6 +205,8 @@ function showError(msg) {
 }
 function startListening() {
   if (!SR) { showError('इस ब्राउज़र में आवाज़ पहचान नहीं है। कृपया Android Chrome इस्तेमाल करें।'); return; }
+  if (!navigator.onLine) { showError('इंटरनेट बंद है। बोलकर पूछना बंद है, लिखकर पूछिए।'); return; }
+  if (wrec) { wrec.onend = null; try { wrec.abort(); } catch (e) {} }
   if (rec) { try { rec.abort(); } catch (e) {} }
   speechSynthesis.cancel();
   rec = new SR();
@@ -201,6 +229,7 @@ function startListening() {
       $('live').textContent = '';
       if (auto) return;
       setState('idle', 'कुछ सुनाई नहीं दिया। फिर से दबाइए।');
+      if (wakeOn) setTimeout(startWake, 400);
     } else if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       auto = false; $('auto').setAttribute('aria-pressed', 'false');
       showError('माइक की अनुमति नहीं मिली। Chrome में पते के पास ताले का निशान दबाकर माइक को Allow करें।');
@@ -214,10 +243,59 @@ function startListening() {
     if (document.body.dataset.state === 'listening') {
       setState('idle', 'तैयार — गोले को दबाइए');
       if (auto && !got) setTimeout(startListening, 400);
+      else if (wakeOn && !got) setTimeout(startWake, 400);
     }
   };
   try { rec.start(); } catch (e) {}
 }
+
+/* ---------- वेक वर्ड: "हाय जार्विस" ---------- */
+const WAKE = /जार्विस|जारविस|जरविस|जार्वीस|जर्विस|जार्विश|jarvis/i;
+function startWake() {
+  if (!SR || !wakeOn) return;
+  if (!navigator.onLine) { setState('idle', 'इंटरनेट बंद है — वेक मोड रुका है'); return; }
+  if (wrec) { wrec.onend = null; try { wrec.abort(); } catch (e) {} }
+  wrec = new SR();
+  wrec.lang = 'hi-IN'; wrec.continuous = true; wrec.interimResults = true;
+  wrec.onstart = () => setState('wake', '"हाय जार्विस" बोलिए');
+  wrec.onresult = e => {
+    let t = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript;
+    const m = WAKE.exec(t);
+    if (!m) return;
+    const last = e.results[e.results.length - 1];
+    const rest = t.slice(m.index + m[0].length).replace(/^[\s,।]+/, '');
+    wrec.onend = null; try { wrec.abort(); } catch (x) {}
+    if (last.isFinal && rest.length > 2) handle(rest);
+    else speak('जी सर?', () => startListening());
+  };
+  wrec.onerror = e => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      setWake(false);
+      showError('माइक की अनुमति नहीं मिली। Chrome में ताले के निशान से माइक Allow करें।');
+    }
+  };
+  wrec.onend = () => { if (wakeOn && document.body.dataset.state === 'wake') setTimeout(startWake, 300); };
+  try { wrec.start(); } catch (e) {}
+}
+async function getLock() { try { lock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+function setWake(on) {
+  wakeOn = on;
+  $('wake').setAttribute('aria-pressed', on);
+  if (on) {
+    addMsg('jarvis', 'वेक मोड चालू। स्क्रीन चालू रखकर "हाय जार्विस" बोलिए।');
+    startWake(); getLock();
+  } else {
+    if (wrec) { wrec.onend = null; try { wrec.abort(); } catch (e) {} }
+    if (lock) { lock.release(); lock = null; }
+    setState('idle', 'तैयार — गोले को दबाइए');
+  }
+}
+$('wake').addEventListener('click', () => setWake(!wakeOn));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && wakeOn) { getLock(); startWake(); } });
+window.addEventListener('offline', () => addMsg('jarvis', 'इंटरनेट बंद है। बोलकर पूछना रुका है, लेकिन लिखकर पूछ सकते हैं।'));
+window.addEventListener('online', () => { addMsg('jarvis', 'इंटरनेट वापस आ गया।'); if (wakeOn) startWake(); });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 $('orb').addEventListener('click', () => {
   if (document.body.dataset.state === 'listening') { try { rec.stop(); } catch (e) {} }
